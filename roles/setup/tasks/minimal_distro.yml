@@ -1,0 +1,21 @@
+---
+- name: 'Upgrade and install apt packages.'
+  become: true
+  when: ansible_os_family == 'Debian'
+  block:
+      - name: 'Update packages'
+        ansible.builtin.apt:
+            update_cache: true
+            cache_valid_time: 3600
+            name: '*'
+        tags:
+            - 'always'
+            - 'apt'
+
+      - name: 'Install required packages'
+        ansible.builtin.apt:
+            name: '{{ setup_apt }}'
+        tags:
+            - 'always'
+            - 'apt'
+...

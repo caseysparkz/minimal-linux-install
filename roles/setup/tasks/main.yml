@@ -1,0 +1,20 @@
+---
+- name: 'Update and install packages'
+  ansible.builtin.include_tasks: 'minimal_distro.yml'
+  tags:
+      - 'setup'
+      - 'minimal_distro'
+
+- name: 'Performance tweaks'
+  ansible.builtin.include_tasks: 'performance_tweaks.yml'
+  tags:
+      - 'setup'
+      - 'performance_tweaks'
+      - 'optional'
+
+- name: 'Harden system'
+  ansible.builtin.include_tasks: 'harden_system.yml'
+  tags:
+      - 'setup'
+      - 'hardening'
+...

@@ -1,0 +1,7 @@
+---
+- name: 'Set up end-user Linux system.'
+  hosts: 'localhost'
+  gather_facts: true
+  roles:
+      - 'setup'
+...

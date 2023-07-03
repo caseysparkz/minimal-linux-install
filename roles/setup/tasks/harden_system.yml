@@ -1,0 +1,263 @@
+---
+- name: 'Harden system'
+  become: true
+  block:
+      - name: 'Disable host-based authentication (1)'
+        ansible.builtin.lineinfile:
+            create: false
+            path: '/etc/ssh/sshd_config'
+            regexp: '(?i)^\s*HostbasedAuthentication yes\s+'
+            state: 'absent'
+        failed_when: false
+
+      - name: 'Disable host-based authentication (2)'
+        ansible.builtin.lineinfile:
+            create: true
+            insertbefore: '^[#\s]*Match'
+            line: 'HostbasedAuthentication no'
+            path: '/etc/ssh/sshd_config'
+            state: 'present'
+            validate: '/usr/sbin/sshd -t -f %s'
+            mode: '0644'
+        failed_when: false
+
+      - name: 'Disable SSH root login (1)'
+        ansible.builtin.lineinfile:
+            create: false
+            path: '/etc/ssh/sshd_config'
+            regexp: '(?i)^\s*PermitRootLogin yes\s+'
+            state: 'absent'
+        failed_when: false
+
+      - name: 'Disable SSH root login (2)'
+        ansible.builtin.lineinfile:
+            create: true
+            insertbefore: '^[#\s]*Match'
+            line: 'PermitRootLogin no'
+            path: '/etc/ssh/sshd_config'
+            state: 'present'
+            validate: '/usr/sbin/sshd -t -f %s'
+            mode: '0644'
+        failed_when: false
+
+      - name: 'Disable coredump storage'
+        ansible.builtin.blockinfile:
+            path: '/etc/systemd/coredump.conf.d/coredump_hardening.conf'
+            create: true
+            mode: '0644'
+            block: |
+                [Coredump]
+                Storage=none
+
+      - name: 'Get mounts from /etc/mtab'
+        ansible.builtin.command: 'cat /etc/mtab'
+        changed_when: false
+        register: setup_mount_options
+
+      - name: 'Ensure fstab uses nodev'
+        ansible.posix.mount:
+            path: '{{ item.split(" ")[1] }}'
+            state: 'mounted'
+            fstype: '{{ item.split(" ")[2] }}'
+            src: '{{ item.split(" ")[0] }}'
+            opts: '{{ item.split(" ")[3].split(",") | union(["nodev"]) | unique | join(",") }}'
+        loop: '{{ setup_mount_options.stdout_lines }}'
+        when:
+            - item.split(' ')[1] in  ['/boot' , '/dev/shm', '/home', '/tmp', '/var', '/var/tmp', '/var/log', '/proc']
+
+      - name: 'Get mounts from /etc/mtab'
+        ansible.builtin.command: 'cat /etc/mtab'
+        changed_when: false
+        register: setup_mount_options
+
+      - name: Ensure fstab uses noexec
+        ansible.posix.mount:
+            path: '{{ item.split(" ")[1] }}'
+            state: mounted
+            fstype: '{{ item.split(" ")[2] }}'
+            src: '{{ item.split(" ")[0] }}'
+            opts: '{{ item.split(" ")[3].split(",") | union(["noexec"]) | unique | join(",") }}'
+        loop: '{{ setup_mount_options.stdout_lines }}'
+        when:
+            - item.split(' ')[1] in ['/boot' , '/dev/shm', '/tmp', '/var', '/var/tmp', '/var/log', '/proc']
+
+      - name: 'Get mounts from /etc/mtab'
+        ansible.builtin.command: 'cat /etc/mtab'
+        changed_when: false
+        register: setup_mount_options
+
+      - name: 'Ensure fstab uses nosuid'
+        ansible.posix.mount:
+            path: '{{ item.split(" ")[1] }}'
+            state: 'mounted'
+            fstype: '{{ item.split(" ")[2] }}'
+            src: '{{ item.split(" ")[0] }}'
+            opts: '{{ item.split(" ")[3].split(",") | union(["nosuid"]) | unique | join(",") }}'
+        loop: '{{ setup_mount_options.stdout_lines }}'
+        when:
+            - item.split(' ')[1] in ['/boot' , '/dev/shm', '/tmp', '/var', '/var/tmp', '/var/log', '/proc']
+
+      - name: 'Fix directory permissions'
+        ansible.builtin.file:
+            path: '{{ item }}'
+            state: 'directory'
+            mode: '0700'
+        loop:
+            - '/boot'
+            - '/lib/modules'
+            - '/usr/lib/modules'
+            - '/usr/src'
+            - '{{ ansible_env.HOME }}'
+
+      - name: 'Find unauthorized world-writable files'
+        ansible.builtin.command: 'find -L {{ item }} -perm /go+w -type f -exec chmod go-w {} \;'
+        loop:
+            - '/bin'
+            - '/sbin'
+            - '/usr/bin'
+            - '/usr/local/bin'
+            - '/usr/local/sbin'
+            - '/usr/sbin'
+        changed_when: false
+        failed_when: false
+
+      - name: 'Disable securetty'
+        ansible.builtin.copy:
+            dest: '/etc/securetty'
+            owner: 'root'
+            group: 'root'
+            mode: '0400'
+            content: ''
+            force: false
+
+      - name: 'Disable su binary for non-sudo users'
+        ansible.builtin.file:
+            dest: '/bin/su'
+            owner: 'root'
+            group: 'root'
+            mode: '0750'
+
+      - name: 'Find pkexec binary'
+        ansible.builtin.find:
+            paths:
+                - '/bin'
+                - '/usr/bin'
+            patterns: '^pkexec$'
+        register: setup_pkexec
+
+      - name: 'Disable pkexec binary for non-sudo users'
+        ansible.builtin.file:
+            dest: '{{ item }}'
+            owner: 'root'
+            group: 'root'
+            mode: '0750'
+        loop: '{{ setup_pkexec.files }}'
+        when: setup_pkexec.examined | length != 0
+
+      - name: 'Create limits.d-directory'
+        ansible.builtin.file:
+            path: '/etc/security/limits.d'
+            owner: 'root'
+            group: 'root'
+            mode: '0755'
+            state: 'directory'
+
+      - name: 'Create ulimit hardening file (1)'
+        community.general.pam_limits:
+            dest: '/etc/security/limits.d/hardening.conf'
+            domain: '*'
+            limit_item: 'core'
+            limit_type: 'hard'
+            value: '0'
+
+      - name: 'Create ulimit hardening file (2)'
+        community.general.pam_limits:
+            dest: '/etc/security/limits.d/hardening.conf'
+            domain: '*'
+            limit_item: 'core'
+            limit_type: 'soft'
+            value: '0'
+
+      - name: 'Limit number of concurrent logins'
+        community.general.pam_limits:
+            dest: '/etc/security/limits.d/hardening.conf'
+            domain: '*'
+            limit_item: 'maxlogins'
+            limit_type: 'hard'
+            value: '5'
+
+      - name: 'Change /etc/ files ownership and mode to restrict access'
+        ansible.builtin.file:
+            path: '{{ item.path }}'
+            owner: 'root'
+            group: 'root'
+            mode: '{{ item.mode }}'
+        loop: '{{ setup_file_modes }}'
+
+      - name: 'Update /etc/profiles with personal variables'
+        ansible.builtin.lineinfile:
+            backup: true
+            line: '{{ item }}'
+            path: '/etc/profile'
+            regexp: '{{ item }}'
+            state: 'present'
+        loop:
+            - 'umask 027'
+            - 'ulimit -S -c 0'
+
+      - name: 'Set umask'
+        ansible.builtin.replace:
+            path: '{{ item }}'
+            regexp: 'umask.*022$'
+            replace: 'umask 027'
+            backup: true
+        loop:
+            - '/etc/login.defs'
+            - '/etc/bash.bashrc'
+            - '/etc/csh.cshrc'
+            - '/etc/zsh.zshrc'
+        failed_when: false
+
+      - name: 'Remove group/others from user directory'
+        ansible.builtin.command: 'find {{ ansible_env.HOME }} -type d -exec chmod go-rwx {} \;'
+        changed_when: false
+
+      - name: 'Set sysctl variables'
+        ansible.posix.sysctl:
+            ignoreerrors: true
+            name: '{{ item.name }}'
+            value: '{{ item.value }}'
+            state: 'present'
+            sysctl_set: true
+            reload: true
+        loop: '{{ setup_sysctl_vars }}'
+
+      - name: 'Deploy grub flags'
+        ansible.builtin.replace:
+            path: '/etc/default/grub'
+            regexp: 'rhgb quiet'
+            replace: 'rhgb slab_nomerge quiet'
+            backup: true
+        notify:
+            - 'setup : Update grub and initramfs'
+
+      - name: Deploy grub flags
+        ansible.builtin.replace:
+            path: '/etc/default/grub'
+            regexp: >
+                ^(GRUB_CMDLINE_LINUX=(?:(?![" ]{{ item.option | regex_escape }}=).)*)(?:[" ]
+                {{ item.option | regex_escape }}=\S+)?(.*")$'
+            replace: '\1 {{ item.option }}={{ item.value }}\2'
+            backup: true
+        loop: '{{ setup_grub_flags }}'
+        notify:
+            - 'setup : Update grub and initramfs'
+
+      - name: 'Use jitterentropy_rng'
+        ansible.builtin.blockinfile:
+            path: '/etc/modules-load.d/jitterentropy_rng.conf'
+            create: true
+            mode: '644'
+            block: |
+                jitterentropy_rng
+...

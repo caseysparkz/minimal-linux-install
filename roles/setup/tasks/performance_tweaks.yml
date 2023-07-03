@@ -1,0 +1,22 @@
+---
+- name: 'Run performance tweaks'
+  become: true
+  block:
+      - name: 'Update fstab file with tmpfs /tmp'
+        ansible.builtin.lineinfile:
+            path: '/etc/fstab'
+            regexp: 'tmpfs /tmp tmpfs'
+            line: 'tmpfs /tmp tmpfs defaults,lazytime,noatime,nodiratime 0 0'
+            state: 'present'
+            backup: true
+
+      - name: 'Load IO Schedulers at boot'
+        ansible.builtin.blockinfile:
+            path: '/etc/modules-load.d/iosched.conf'
+            create: true
+            mode: '0644'
+            block: |
+                bfq
+                mq-deadline
+                kyber-iosched
+...

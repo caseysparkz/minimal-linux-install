@@ -1,0 +1,26 @@
+---
+name: 'Lint Ansible configurations'
+'on':
+    push:
+        branches:
+            - 'main'
+            - 'staging/**'
+            - 'WIP/**'
+    pull_request:
+        branches:
+            - 'main'
+            - 'staging/**'
+jobs:
+    lint_playbooks:
+        name: 'Lint YAML files with ansible-lint'
+        runs-on: 'ubuntu-latest'
+
+        steps:
+            - name: 'Checkout codebase'
+              uses: 'actions/checkout@v3'
+              with:
+                  fetch-depth: 0
+
+            - name: 'Run ansible-lint'
+              uses: 'ansible/ansible-lint-action@main'
+...
